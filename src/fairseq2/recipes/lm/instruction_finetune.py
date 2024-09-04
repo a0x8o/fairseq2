@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, final
+from typing import List, Literal, Optional, final
 
 import torch
 import torch.distributed
@@ -66,6 +66,9 @@ class InstructionFinetuneConfig:
     # Data
     dataset: AssetReference = "foo"  # TODO: change!
     """The name, path, or path to the asset card of the instruction dataset."""
+
+    valid_datasets: Optional[List[AssetReference]] = None
+    """The name, path, or path to the asset card of the instruction dataset used for validation"""
 
     max_seq_len: int = 8192
     """The maximum sequence length."""
@@ -144,6 +147,9 @@ class InstructionFinetuneConfig:
 
     checkpoint_every_n_steps: int = 1000
     """The step interval at which to checkpoint."""
+
+    validate_every_n_steps: int = None
+    """The step interval at which validation will be executed"""
 
     checkpoint_every_n_data_epochs: int | None = None
     """The data epoch interval at which to checkpoint."""
@@ -237,6 +243,26 @@ def _llama3_1_70b_instruct() -> InstructionFinetuneConfig:
     return config
 
 
+def parse_dataset_arg(dataset: AssetReference):
+    try:
+        dataset_card = retrieve_asset_card(dataset)
+    except AssetNotFoundError:
+        dataset_card = None
+
+    if dataset_card is not None:
+        log.info("Loading {} instruction dataset.", dataset_card.name)
+
+        dataset = load_instruction_dataset(dataset_card)
+
+        log.info("Dataset loaded.")
+    else:
+        dataset_path = asset_as_path(dataset)
+
+        dataset = GenericInstructionDataset.from_path(dataset_path)
+
+    return dataset
+
+
 def load_instruction_finetuner(
     config: InstructionFinetuneConfig, output_dir: Path
 ) -> Trainer[SequenceBatch]:
@@ -269,21 +295,15 @@ def load_instruction_finetuner(
     log.info("Tokenizer loaded.")
 
     # Load the dataset.
-    try:
-        dataset_card = retrieve_asset_card(config.dataset)
-    except AssetNotFoundError:
-        dataset_card = None
+    dataset = parse_dataset_arg(config.dataset)
 
-    if dataset_card is not None:
-        log.info("Loading {} instruction dataset.", dataset_card.name)
-
-        dataset = load_instruction_dataset(dataset_card)
-
-        log.info("Dataset loaded.")
+    # Maybe load the validation dataset
+    if config.valid_datasets is not None:
+        valid_datasets = []
+        for valid_dataset in config.valid_datasets:
+            valid_datasets.append(parse_dataset_arg(valid_dataset))
     else:
-        dataset_path = asset_as_path(config.dataset)
-
-        dataset = GenericInstructionDataset.from_path(dataset_path)
+        valid_datasets = None
 
     seed = config.seed
 
@@ -362,6 +382,13 @@ def load_instruction_finetuner(
     # Initialize the train unit and the optimizer.
     unit = InstructionFinetuneUnit(dp_model, dp_gang)
 
+    # we use the same units for validation here
+    if valid_datasets is not None:
+        valid_units = [unit] * len(valid_datasets)
+    else:
+        valid_units = None
+
+    # train reader
     try:
         data_reader = dataset.create_reader(
             tokenizer,
@@ -378,6 +405,31 @@ def load_instruction_finetuner(
         raise ValueError(
             "The data reader cannot be initialized. See nested exception for details."
         ) from ex
+
+    # maybe valid readers
+    if valid_datasets is not None:
+        valid_data_readers = []
+        for valid_dataset in valid_datasets:
+            try:
+                valid_data_readers.append(
+                    dataset.create_reader(
+                        tokenizer,
+                        dp_gang,
+                        config.max_seq_len,
+                        batching=LengthBatching(config.max_num_tokens),
+                        example_shuffle_window=config.example_shuffle_window,
+                        batch_shuffle_window=config.batch_shuffle_window,
+                        num_accumulate=config.gradient_accumulation,
+                        num_prefetch=config.num_prefetch,
+                        seed=seed,
+                    )
+                )
+            except ValueError as ex:
+                raise ValueError(
+                    "The data reader cannot be initialized. See nested exception for details."
+                ) from ex
+    else:
+        valid_data_readers = None
 
     seed += 1
 
@@ -407,7 +459,9 @@ def load_instruction_finetuner(
     # Initialize the trainer.
     return Trainer[SequenceBatch](
         unit=unit,
+        valid_units=valid_units,
         data_reader=data_reader,
+        valid_data_readers=valid_data_readers,
         root_gang=root_gang,
         dp_gang=dp_gang,
         tp_gang=tp_gang,
@@ -420,6 +474,8 @@ def load_instruction_finetuner(
         max_num_data_epochs=config.max_num_data_epochs,
         checkpoint_manager=checkpoint_manager,
         checkpoint_every_n_steps=config.checkpoint_every_n_steps,
+        validate_every_n_steps=config.validate_every_n_steps,
+        score_metric_name="nll_loss" if valid_units is not None else None,
         checkpoint_every_n_data_epochs=config.checkpoint_every_n_data_epochs,
         keep_last_n_checkpoints=config.keep_last_n_checkpoints,
         keep_last_n_models=config.keep_last_n_models,
@@ -452,6 +508,7 @@ class InstructionFinetuneUnit(AbstractTrainUnit[SequenceBatch]):
         check_model_type(model, DecoderModel)
 
         self._metric_bag = SequenceMetricBag(gang)
+        self.display_name = "instruction_finetune"
 
     @override
     def __call__(self, batch: SequenceBatch) -> tuple[Tensor, int]:
