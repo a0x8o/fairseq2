@@ -55,6 +55,7 @@ class Wav2Vec2Model(Model):
         num_distractors: int = 100,
         logit_temp: float = 0.1,
         quantizer_encoder_grad: bool = True,
+        replace_quantizer_with_linear: bool = False,
         device: Device | None = None,
         dtype: DataType | None = None,
     ) -> None:
@@ -88,19 +89,25 @@ class Wav2Vec2Model(Model):
 
         self.masker = masker
 
-        if quantizer.input_dim != encoder_frontend.feature_dim:
-            raise ValueError(
-                f"`input_dim` of `quantizer` and `feature_dim` of `encoder_frontend` must be equal, but are {quantizer.input_dim} and {encoder_frontend.feature_dim} instead."
-            )
+        print(replace_quantizer_with_linear)
+        assert False
+        if not replace_quantizer_with_linear:
+            # only check when we are not replacing
+            if quantizer.input_dim != encoder_frontend.feature_dim:
+                raise ValueError(
+                    f"`input_dim` of `quantizer` and `feature_dim` of `encoder_frontend` must be equal, but are {quantizer.input_dim} and {encoder_frontend.feature_dim} instead."
+                )
 
-        self.quantizer = quantizer
+            self.quantizer = quantizer
 
         self.final_proj = Linear(
             model_dim, final_dim, final_proj_bias, device=device, dtype=dtype
         )
 
+        final_target_proj_input_dim = encoder_frontend.feature_dim if replace_quantizer_with_linear else self.quantizer.output_dim
         self.final_target_proj = Linear(
-            self.quantizer.output_dim,
+            # self.quantizer.output_dim,
+            final_target_proj_input_dim,
             final_dim,
             bias=True,
             device=device,
@@ -110,6 +117,7 @@ class Wav2Vec2Model(Model):
         self.num_distractors = num_distractors
         self.logit_temp = logit_temp
         self.quantizer_encoder_grad = quantizer_encoder_grad
+        self.replace_quantizer_with_linear = replace_quantizer_with_linear
 
     def forward(self, batch: SequenceBatch) -> Wav2Vec2Output:
         """
@@ -190,9 +198,15 @@ class Wav2Vec2Model(Model):
 
         seqs = self.final_proj(seqs)
 
-        quantizer_output = self.quantizer(targets)
+        if self.replace_quantizer_with_linear:
+            targets = self.final_target_proj(targets)
 
-        targets = self.final_target_proj(quantizer_output.quantized_vectors)
+            quantizer_output = None
+
+        else:
+            quantizer_output = self.quantizer(targets)
+
+            targets = self.final_target_proj(quantizer_output.quantized_vectors)
 
         distractors = self._sample_distractors(targets)
 
@@ -368,7 +382,7 @@ class Wav2Vec2Output:
         """
         contrastive_loss = self.compute_contrastive_loss()
 
-        diversity_loss = self.compute_diversity_loss()
+        diversity_loss = 0. if self.replace_quantizer_with_linear else self.compute_diversity_loss()
 
         penalty = self.compute_penalty()
 
