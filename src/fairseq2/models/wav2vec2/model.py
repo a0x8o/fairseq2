@@ -89,8 +89,6 @@ class Wav2Vec2Model(Model):
 
         self.masker = masker
 
-        print(replace_quantizer_with_linear)
-        assert False
         if not replace_quantizer_with_linear:
             # only check when we are not replacing
             if quantizer.input_dim != encoder_frontend.feature_dim:
@@ -382,7 +380,7 @@ class Wav2Vec2Output:
         """
         contrastive_loss = self.compute_contrastive_loss()
 
-        diversity_loss = 0. if self.replace_quantizer_with_linear else self.compute_diversity_loss()
+        diversity_loss = 0. if self.quantized_targets is None else self.compute_diversity_loss()
 
         penalty = self.compute_penalty()
 
