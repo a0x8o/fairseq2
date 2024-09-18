@@ -77,6 +77,10 @@ class Wav2Vec2Config:
     encoder. Otherwise, they are detached and the encoder is only trained with gradients
     from the transformer. """
 
+    replace_quantizer_with_linear: bool = True
+    """
+    """
+
     # Mask
     temporal_mask_span_len: int = 10
     """The length of each temporal mask span that is applied over time steps."""
@@ -290,6 +294,7 @@ class Wav2Vec2Builder:
             num_distractors=self._config.num_distractors,
             logit_temp=self._config.logit_temp,
             quantizer_encoder_grad=self._config.quantizer_encoder_grad,
+            replace_quantizer_with_linear=self._config.replace_quantizer_with_linear,
             device=self._device,
             dtype=self._dtype,
         )

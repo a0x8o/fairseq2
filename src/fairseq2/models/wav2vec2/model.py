@@ -380,7 +380,7 @@ class Wav2Vec2Output:
         """
         contrastive_loss = self.compute_contrastive_loss()
 
-        diversity_loss = 0. if self.quantized_targets is None else self.compute_diversity_loss()
+        diversity_loss = contrastive_loss.new([0.]) if self.quantizer_output is None else self.compute_diversity_loss()
 
         penalty = self.compute_penalty()
 
