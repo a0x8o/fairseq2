@@ -56,6 +56,7 @@ class Wav2Vec2Model(Model):
         logit_temp: float = 0.1,
         quantizer_encoder_grad: bool = True,
         replace_quantizer_with_linear: bool = False,
+        freeze_linear: bool = False,
         device: Device | None = None,
         dtype: DataType | None = None,
     ) -> None:
@@ -111,6 +112,9 @@ class Wav2Vec2Model(Model):
             device=device,
             dtype=dtype,
         )
+
+        if replace_quantizer_with_linear and freeze_linear:
+            self.final_target_proj.requires_grad = False
 
         self.num_distractors = num_distractors
         self.logit_temp = logit_temp

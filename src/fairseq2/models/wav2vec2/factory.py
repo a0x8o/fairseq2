@@ -78,6 +78,8 @@ class Wav2Vec2Config:
     from the transformer. """
 
     replace_quantizer_with_linear: bool = True
+
+    freeze_linear: bool = False
     """
     """
 
@@ -295,6 +297,7 @@ class Wav2Vec2Builder:
             logit_temp=self._config.logit_temp,
             quantizer_encoder_grad=self._config.quantizer_encoder_grad,
             replace_quantizer_with_linear=self._config.replace_quantizer_with_linear,
+            freeze_linear=self._config.freeze_linear,
             device=self._device,
             dtype=self._dtype,
         )
