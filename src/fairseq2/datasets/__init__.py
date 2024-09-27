@@ -25,3 +25,4 @@ import fairseq2.datasets.instruction
 import fairseq2.datasets.parallel_text
 import fairseq2.datasets.speech
 import fairseq2.datasets.text
+import fairseq2.datasets.mms
