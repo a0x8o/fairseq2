@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import math
 from itertools import chain
 from typing import Any, Literal, cast, final
 
@@ -191,23 +192,42 @@ class AdamW(AbstractOptimizer):
             if isinstance(found_inf := kwargs.get("found_inf"), Tensor):
                 kwargs["found_inf"] = found_inf.squeeze()
 
-            adamw(
-                params_with_grad,
-                grads,
-                exp_avgs,
-                exp_avg_sqs,
-                max_exp_avg_sqs,
-                steps,
-                amsgrad=amsgrad,
-                beta1=beta1,
-                beta2=beta2,
-                lr=pg["lr"],
-                weight_decay=pg["weight_decay"],
-                eps=pg["eps"],
-                maximize=pg["maximize"],
-                capturable=pg["capturable"],
-                **kwargs,
-            )
+            for idx in range(len(grads)):
+                naive_adamw(
+                    params_with_grad[idx],
+                    grads[idx],
+                    exp_avgs[idx],
+                    exp_avg_sqs[idx],
+                    None,
+                    steps[idx],
+                    amsgrad=amsgrad,
+                    beta1=beta1,
+                    beta2=beta2,
+                    lr=pg["lr"],
+                    weight_decay=pg["weight_decay"],
+                    eps=pg["eps"],
+                    maximize=pg["maximize"],
+                    capturable=pg["capturable"],
+                    **kwargs,
+                )
+
+#            adamw(
+#                params_with_grad,
+#                grads,
+#                exp_avgs,
+#                exp_avg_sqs,
+#                max_exp_avg_sqs,
+#                steps,
+#                amsgrad=amsgrad,
+#                beta1=beta1,
+#                beta2=beta2,
+#                lr=pg["lr"],
+#                weight_decay=pg["weight_decay"],
+#                eps=pg["eps"],
+#                maximize=pg["maximize"],
+#                capturable=pg["capturable"],
+#                **kwargs,
+#            )
 
             if use_fp32:
                 params = (p for p in pg["params"] if p.grad is not None)
@@ -275,3 +295,46 @@ class AdamW(AbstractOptimizer):
 
         if amsgrad:
             max_exp_avg_sqs.append(state["max_exp_avg_sq"])
+
+
+def naive_adamw(
+    param,
+    grad,
+    exp_avg,
+    exp_avg_sq,
+    max_exp_avg_sq,
+    step,
+    amsgrad,
+    beta1,
+    beta2,
+    lr,
+    weight_decay,
+    eps,
+    maximize,
+    capturable,
+):
+    step += 1
+
+    # Decay the first and second moment running average coefficient
+    exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
+    exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
+    if amsgrad:
+        # Maintains the maximum of all 2nd moment running avg. till now
+        torch.max(max_exp_avg_sq, exp_avg_sq, out=max_exp_avg_sq)
+        # Use the max. for normalizing running avg. of gradient
+        denom = max_exp_avg_sq.sqrt().add_(eps)
+    else:
+        denom = exp_avg_sq.sqrt().add_(eps)
+
+    bias_correction1 = 1 - beta1 ** step
+    bias_correction2 = 1 - beta2 ** step
+    step_size = lr * math.sqrt(bias_correction2) / bias_correction1
+
+    if weight_decay != 0:
+        param.add_(param, alpha=-weight_decay * lr)
+
+    param.addcdiv_(exp_avg, denom, value=-step_size)
+
+    y = param.to(torch.bfloat16)
+
+    param.copy_(y)

@@ -104,7 +104,7 @@ class StandardSweepTagger(SweepTagger):
 
         sweep_format = tags.pop("sweep_format", None)
         if sweep_format is None:
-            sweep_format = "ps_{preset}.ws_{world_size}.{hash}"
+            sweep_format = "1_ps_{preset}.ws_{world_size}.{hash}"
 
         tags["hash"] = self._generate_hash(tags)
 
