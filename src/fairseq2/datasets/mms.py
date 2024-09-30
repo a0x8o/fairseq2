@@ -317,6 +317,11 @@ class MmsSpeechDataset(SpeechDataset):
         # Prefetch `num_prefetch` batches in background.
         builder.prefetch(num_prefetch)
 
+        p = builder.take(100).and_return()
+        cache = list(p)
+
+        builder = read_sequence(cache)
+
         def to_batch(example: dict[str, Any]) -> SequenceBatch:
             seqs = example["audio"]["data"]["waveform"].to(gang.device)
 
